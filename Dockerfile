@@ -5,6 +5,8 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN microdnf install -y \
       bash \
       tmux \
+      curl \
+      jq \
       procps-ng \
       util-linux \
       shadow-utils \

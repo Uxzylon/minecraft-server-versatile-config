@@ -18,87 +18,25 @@
 
 set -uo pipefail
 
-########################################
-# .env loading
-########################################
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+COMMON_FILE="${COMMON_FILE:-$SCRIPT_DIR/mc-common.sh}"
 
-# Reads .env from the current working directory by default.
-# This is intentionally compatible with common Docker Compose .env files:
-#   KEY=value
-#   KEY="value with spaces"
-#   KEY='value with spaces'
-#   # comments
-#
-# Existing environment variables always win over .env values:
-#   SERVER_JAR=custom.jar ./start.sh
-# will not be overwritten by SERVER_JAR=... inside .env.
+if [[ ! -f "$COMMON_FILE" ]]; then
+  printf '[launcher:error] common file not found: %s
+' "$COMMON_FILE" >&2
+  exit 1
+fi
+
+# shellcheck source=mc-common.sh
+source "$COMMON_FILE"
+
 DOTENV_FILE="${DOTENV_FILE:-$PWD/.env}"
 LOAD_DOTENV="${LOAD_DOTENV:-true}"
-
-trim_string() {
-  local value="$1"
-  value="${value#"${value%%[![:space:]]*}"}"
-  value="${value%"${value##*[![:space:]]}"}"
-  printf '%s' "$value"
-}
-
-load_dotenv_file() {
-  local env_file="$1"
-
-  case "${LOAD_DOTENV,,}" in
-    1|true|yes|y|on) ;;
-    *) return 0 ;;
-  esac
-
-  [[ -f "$env_file" ]] || return 0
-
-  local line key value
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    line="${line%$'
-'}"
-    line="$(trim_string "$line")"
-
-    [[ -z "$line" ]] && continue
-    [[ "$line" == \#* ]] && continue
-
-    # Optional Docker/shell-friendly prefix.
-    if [[ "$line" =~ ^export[[:space:]]+(.+)$ ]]; then
-      line="${BASH_REMATCH[1]}"
-    fi
-
-    [[ "$line" == *=* ]] || continue
-
-    key="$(trim_string "${line%%=*}")"
-    value="$(trim_string "${line#*=}")"
-
-    # Only valid environment variable names are loaded.
-    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
-
-    # Real environment variables, even empty ones, have priority over .env.
-    [[ -n "${!key+x}" ]] && continue
-
-    if [[ "$value" =~ ^\"(.*)\"[[:space:]]*(#.*)?$ ]]; then
-      value="${BASH_REMATCH[1]}"
-    elif [[ "$value" =~ ^\'(.*)\'[[:space:]]*(#.*)?$ ]]; then
-      value="${BASH_REMATCH[1]}"
-    else
-      # For unquoted values, support inline comments only when preceded by whitespace.
-      value="${value%%[[:space:]]#*}"
-      value="$(trim_string "$value")"
-    fi
-
-    printf -v "$key" '%s' "$value"
-    export "$key"
-  done < "$env_file"
-}
-
 load_dotenv_file "$DOTENV_FILE"
 
 ########################################
 # Configuration
 ########################################
-
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 BASE_DIR="${BASE_DIR:-$SCRIPT_DIR}"
 
 JAVA_BIN="${JAVA_BIN:-java}"
@@ -187,23 +125,6 @@ EXTERNAL_COMMAND_MODE="false"
 ########################################
 # Utility functions
 ########################################
-
-bool_is_true() {
-  case "${1,,}" in
-    1|true|yes|y|on) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-log() {
-  printf '[launcher] %s
-' "$*"
-}
-
-err() {
-  printf '[launcher:error] %s
-' "$*" >&2
-}
 
 resolve_from_base() {
   local path="$1"
@@ -732,6 +653,7 @@ External command mode, used by AutoServer or scripts:
   ./start.sh status              Same as typing !status in the live launcher
 
 Environment loading:
+  - Shared .env loading lives in mc-common.sh.
   - By default, ./start.sh reads .env from the current working directory.
   - Existing environment variables override .env values.
   - Use DOTENV_FILE=/path/to/.env ./start.sh to load another file.
