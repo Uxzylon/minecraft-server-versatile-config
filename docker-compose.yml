@@ -3,6 +3,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        BASE_IMAGE: ${DOCKER_BASE_IMAGE:-ghcr.io/graalvm/jdk-community:25-ol9}
+        MINECRAFT_UID: ${PUID:-1000}
+        MINECRAFT_GID: ${PGID:-1000}
     container_name: ${CONTAINER_NAME:-minecraft-server}
     user: "${PUID:-1000}:${PGID:-1000}"
     restart: unless-stopped
@@ -12,11 +16,15 @@ services:
     env_file:
       - .env
     volumes:
-      - ${MINECRAFT_DATA_DIR:-.}:/minecraft
+      - ${SERVER_WORKING_DIR:-.}:/minecraft
     ports:
       - "${MINECRAFT_PORT:-25565}:${MINECRAFT_CONTAINER_PORT:-25565}"
     healthcheck:
-      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/${MINECRAFT_CONTAINER_PORT:-25565}' >/dev/null 2>&1 || exit 1"]
+      test:
+        [
+          "CMD-SHELL",
+          "if [ '${MC_HEALTHCHECK_ENABLED:-true}' != 'true' ]; then exit 0; fi; bash -c '</dev/tcp/127.0.0.1/${MC_HEALTHCHECK_PORT:-25565}' >/dev/null 2>&1 || exit 1",
+        ]
       interval: 30s
       timeout: 10s
       retries: 5

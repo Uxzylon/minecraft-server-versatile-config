@@ -1,36 +1,45 @@
-FROM ghcr.io/graalvm/jdk-community:25-ol9
+ARG BASE_IMAGE=ghcr.io/graalvm/jdk-community:25-ol9
+FROM ${BASE_IMAGE}
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 RUN microdnf install -y \
-      bash \
-      tmux \
-      curl \
-      jq \
-      procps-ng \
-      util-linux \
-      shadow-utils \
-    && microdnf clean all
+  bash \
+  tmux \
+  curl \
+  jq \
+  gzip \
+  openssh-clients \
+  procps-ng \
+  tar \
+  util-linux \
+  unzip \
+  zip \
+  shadow-utils \
+  && microdnf clean all
 
-RUN groupadd -g 1000 minecraft \
-    && useradd -u 1000 -g 1000 -m -d /home/minecraft -s /bin/bash minecraft
+ARG MINECRAFT_UID=1000
+ARG MINECRAFT_GID=1000
+
+RUN groupadd -g "${MINECRAFT_GID}" minecraft \
+  && useradd -u "${MINECRAFT_UID}" -g "${MINECRAFT_GID}" -m -d /home/minecraft -s /bin/bash minecraft
 
 RUN printf '%s\n' \
-      'set -g mouse on' \
-      'set -g history-limit 50000' \
-      'set -g remain-on-exit off' \
-    > /etc/tmux.conf
+  'set -g mouse on' \
+  'set -g history-limit 50000' \
+  'set -g remain-on-exit off' \
+  > /etc/tmux.conf
 
 WORKDIR /minecraft
 
 COPY --chown=minecraft:minecraft . /minecraft
-RUN chmod +x /minecraft/start.sh 2>/dev/null || true
+RUN chmod +x /minecraft/start.sh /minecraft/mc-*.sh 2>/dev/null || true
 
 RUN cat > /usr/local/bin/container-start <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
-session="minecraft"
+session="${TMUX_SESSION:-minecraft}"
 workdir="/minecraft"
 start_command="${START_COMMAND:-./start.sh}"
 
@@ -73,7 +82,7 @@ RUN cat > /usr/local/bin/attach <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
-session="minecraft"
+session="${TMUX_SESSION:-minecraft}"
 
 if ! tmux has-session -t "$session" 2>/dev/null; then
   echo "tmux session '$session' is not running" >&2
@@ -86,7 +95,7 @@ EOF
 RUN chmod +x /usr/local/bin/container-start /usr/local/bin/attach
 
 ENV HOME=/home/minecraft \
-    TERM=xterm-256color \
-    START_COMMAND=./start.sh
+  TERM=xterm-256color \
+  START_COMMAND=./start.sh
 
 ENTRYPOINT ["container-start"]

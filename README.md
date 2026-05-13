@@ -1,109 +1,198 @@
 # Minecraft Server Toolkit
 
-A small Bash-based toolkit for running and maintaining a Minecraft server setup with a main server jar, optional service jars such as Velocity, automatic updates, backups, Dynmap helpers, and Docker support.
+Generic Bash and Docker tooling for running a Minecraft server folder. It can run one main server jar, optional side-service jars such as Velocity, and maintenance helpers for manual updates, backups, and Dynmap.
 
-The tools are designed around one `.env` file. Most configuration changes should happen there instead of editing the scripts.
+Configuration lives in `.env`. The committed files are meant to stay generic; copy `.env.example` to `.env`, then uncomment only the values this server actually overrides.
 
-## Included tools
+## Files
 
-| File                 | Purpose                                                                                                                       |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `start.sh`           | Runs the Minecraft server and service jars, combines logs, forwards console input, and supports external start/stop commands. |
-| `mc-common.sh`       | Shared helper functions and `.env` loading used by the other scripts.                                                         |
-| `mc-updater.sh`      | Installs and updates Fabric server jars, Velocity/PaperMC jars, Modrinth projects, CurseForge projects, and direct URL jars.  |
-| `mc-backup.sh`       | Creates full or world-only backups, can warn players in-game, and can restore archives.                                       |
-| `mc-dynmap.sh`       | Uploads Dynmap web files and can reset Dynmap SQL tables.                                                                     |
-| `Dockerfile`         | Builds a GraalVM-based container that runs the configured start command inside tmux.                                          |
-| `docker-compose.yml` | Runs the toolkit with Docker Compose.                                                                                         |
-| `.env.example`       | Example configuration file. Copy it to `.env` and edit it.                                                                    |
+| File | Purpose |
+| --- | --- |
+| `start.sh` | Runs the main server jar and service jars in one console, with shared logs and launcher commands. |
+| `mc-common.sh` | Shared logging, bool parsing, and `.env` loading. |
+| `mc-updater.sh` | Manual installer/updater for Fabric server jars, PaperMC/Velocity jars, Modrinth, CurseForge, and direct URL jars. |
+| `mc-backup.sh` | Full or world-only backups, restore, save-off/save-on, and optional server restart. |
+| `mc-dynmap.sh` | Dynmap web upload and SQL table reset helpers. |
+| `Dockerfile` | Generic Java/tmux container. It does not know about Velocity or any specific server topology. |
+| `docker-compose.yml` | Mounts a server folder at `/minecraft`, exposes configured ports, and runs `START_COMMAND`. |
+| `.env.example` | Mostly commented override catalog. Copy to `.env`, then uncomment/edit values. |
 
 ## Requirements
 
-On a host system, install:
+Local usage needs Bash plus the tools used by the commands you run:
 
 ```bash
-bash curl jq zip unzip tar mysql-client openssh-client
+chmod +x start.sh mc-*.sh
 ```
-
-For Docker usage, install Docker and Docker Compose.
-
-The scripts should be executable:
 
 ```bash
-chmod +x start.sh mc-common.sh mc-updater.sh mc-backup.sh mc-dynmap.sh
+# updater
+curl jq
+
+# backups
+tar gzip zip unzip
+
+# dynmap upload / SQL reset
+openssh-client mysql-client
 ```
 
-## Quick start: Fabric + Velocity
+Docker usage needs Docker Compose. The image already includes Java, tmux, curl, jq, zip/unzip, tar/gzip, and SSH client tools.
 
-Start in an empty server folder containing the toolkit files.
+## Start From Zero
+
+1. Copy the toolkit files into an empty server folder.
+
+2. Create your local config:
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` and set at least:
+3. Open `.env`. The most common settings are at the top and are commented with defaults/examples:
 
 ```env
-MC_GAME_VERSION=1.21.6
-MC_SERVER_LOADER=fabric
+# MC_GAME_VERSION=1.21.6
+# MC_SERVER_LOADER=fabric
+# MC_UPDATER_PLATFORMS=fabric,velocity,paper
+# SERVER_JAVA_OPTS=-Xms2G -Xmx4G
+# MINECRAFT_PORT=25565
+# DOCKER_BASE_IMAGE=ghcr.io/graalvm/jdk-community:25-ol9
+```
+
+Uncomment the lines you want to override. Leaving a line commented means the script default is used.
+
+4. Pick one topology and uncomment/edit those lines.
+
+For one server jar without services:
+
+```env
+START_SERVER_ON_BOOT=true
+START_SERVICES_ON_BOOT=false
+SERVICES_CONFIG=
+SERVER_WORKING_DIR=.
+SERVER_ARGS=nogui
+```
+
+For Velocity plus a lazy backend started by AutoServer:
+
+```env
 START_SERVER_ON_BOOT=false
 START_SERVICES_ON_BOOT=true
 SERVER_WORKING_DIR=.
 SERVER_ARGS=nogui
-SERVICES_CONFIG=velocity|velocity|velocity.jar|-Xms512M -Xmx1G|
+MC_HEALTHCHECK_PORT=25565
 ```
 
-Install the Fabric server jar and update `SERVER_JAR` in `.env`:
+You can leave `SERVICES_CONFIG` commented until you install Velocity. The updater will fill it with the real downloaded Velocity filename.
+
+In that setup, Velocity listens on `25565` and the backend Minecraft server usually listens on another port, for example `25566`.
+
+The rest of `.env.example` stays grouped by tool: launcher, Docker, updater, backups, Dynmap, and shared `.env` loading. Those lower sections are mostly advanced knobs.
+
+## Install Jars, Mods, And Plugins
+
+The updater is manual. It only installs or updates files when you run it.
+
+Install a Fabric server jar and write the downloaded filename into `SERVER_JAR` in `.env`:
 
 ```bash
 ./mc-updater.sh add fabric-server . --mc 1.21.6 --env-key SERVER_JAR
 ```
 
-Install Velocity into the `velocity/` folder:
+If `SERVER_JAR` is still commented in `.env`, the updater activates that template line instead of appending a duplicate.
+
+Install Velocity from PaperMC into `velocity/`:
 
 ```bash
 ./mc-updater.sh add papermc velocity velocity
 ```
 
-If the downloaded Velocity file is not named `velocity.jar`, either rename it:
+This keeps the real PaperMC filename, activates `SERVICES_CONFIG` if it is commented, adds the `velocity` service if it is missing, and updates the service jar filename on future `./mc-updater.sh update` runs.
+
+Install a Paper server jar instead of Fabric:
 
 ```bash
-mv velocity/velocity-*.jar velocity/velocity.jar
+./mc-updater.sh add papermc paper . --filename paper.jar --env-key SERVER_JAR
 ```
 
-or update `SERVICES_CONFIG` in `.env` with the downloaded filename.
-
-Accept the Minecraft EULA:
+Install Fabric API into `mods/`:
 
 ```bash
-echo 'eula=true' > eula.txt
+./mc-updater.sh add modrinth fabric-api mods
 ```
 
-Start the launcher:
+Install a Velocity plugin from Modrinth, for example AutoServer:
+
+```bash
+./mc-updater.sh add modrinth autoserver velocity/plugins --loader velocity --ignore-game-version
+```
+
+Install a CurseForge project by numeric project id:
+
+```bash
+CURSEFORGE_API_KEY=your-api-key
+./mc-updater.sh add curseforge 238222 mods
+```
+
+Install any direct jar URL:
+
+```bash
+./mc-updater.sh add url my-plugin https://example.com/plugin.jar plugins --filename my-plugin.jar
+```
+
+Manage tracked entries:
+
+```bash
+./mc-updater.sh list
+./mc-updater.sh update
+./mc-updater.sh update fabric-api
+./mc-updater.sh disable fabric-api
+./mc-updater.sh enable fabric-api
+./mc-updater.sh remove fabric-api
+```
+
+Accept the EULA before the first server start:
+
+```bash
+printf 'eula=true\n' > eula.txt
+```
+
+## Launcher Console
+
+Start locally:
 
 ```bash
 ./start.sh
 ```
 
-The launcher starts Velocity. The Minecraft server jar will not start automatically because `START_SERVER_ON_BOOT=false`.
-
-Inside the launcher console:
+Launcher commands start with `!`:
 
 ```text
 !help
 !start
 !stop
+!restart
 !status
+!services
+!start-service velocity
+!stop-service velocity
+!send say hello
 !exit
 ```
 
-When the Minecraft server is running, normal input is sent directly to Minecraft. Launcher commands always start with `!`.
+When the main server is running, normal console input is sent to Minecraft. To send a Minecraft command that starts with `!`, type it as `!!command`.
 
-## Using Velocity AutoServer
+External scripts can control the running launcher through the same commands:
 
-AutoServer can start and stop the Minecraft server through the running launcher.
+```bash
+./start.sh start
+./start.sh stop
+./start.sh send "say hello"
+```
 
-Example AutoServer server config:
+## Velocity AutoServer
+
+For lazy backend startup, configure AutoServer to call the launcher:
 
 ```toml
 [servers.host]
@@ -116,14 +205,7 @@ autoShutdownDelay = 1800
 preserveQuotes = true
 ```
 
-The external commands behave like typing these in the launcher console:
-
-```text
-!start
-!stop
-```
-
-For Velocity, make sure `velocity.toml` points to the backend server port, for example:
+Velocity should point at the backend port:
 
 ```toml
 [servers]
@@ -131,96 +213,14 @@ host = "127.0.0.1:25566"
 try = ["host"]
 ```
 
-And make sure the Minecraft backend uses the same port in `server.properties`:
+The backend `server.properties` should match:
 
 ```properties
 server-port=25566
 online-mode=false
 ```
 
-## Managing services
-
-Services are configured with `SERVICES_CONFIG`:
-
-```env
-SERVICES_CONFIG=velocity|velocity|velocity.jar|-Xms512M -Xmx1G|
-```
-
-Format:
-
-```text
-name|working_dir|jar_path|java_opts|jar_args
-```
-
-Multiple services are separated with semicolons:
-
-```env
-SERVICES_CONFIG=velocity|velocity|velocity.jar|-Xms512M -Xmx1G|;bot|bot|bot.jar|-Xmx512M|
-```
-
-Service commands in the launcher:
-
-```text
-!services
-!start-service velocity
-!stop-service velocity
-!restart-service velocity
-```
-
-## Installing mods and plugins
-
-Use `mc-updater.sh` to track and update mods/plugins.
-
-Install Fabric API into `mods/`:
-
-```bash
-./mc-updater.sh add modrinth fabric-api mods
-```
-
-Install a Velocity plugin from Modrinth into `velocity/plugins/`:
-
-```bash
-./mc-updater.sh add modrinth limboapi velocity/plugins --loader velocity
-```
-
-Install from CurseForge using a project ID:
-
-```bash
-./mc-updater.sh add curseforge 238222 mods
-```
-
-CurseForge requires:
-
-```env
-CURSEFORGE_API_KEY=your-api-key
-```
-
-List tracked components:
-
-```bash
-./mc-updater.sh list
-```
-
-Update everything:
-
-```bash
-./mc-updater.sh update
-```
-
-Update one entry:
-
-```bash
-./mc-updater.sh update fabric-api
-```
-
-Disable or enable an entry:
-
-```bash
-./mc-updater.sh disable fabric-api
-./mc-updater.sh enable fabric-api
-```
-
-## Docker usage
+## Docker
 
 Build and start:
 
@@ -228,7 +228,7 @@ Build and start:
 docker compose up -d --build
 ```
 
-Follow logs:
+Follow combined logs:
 
 ```bash
 docker compose logs -f minecraft
@@ -240,11 +240,7 @@ Attach to the live tmux console:
 docker compose exec minecraft attach
 ```
 
-Detach from tmux without stopping the server:
-
-```text
-Ctrl+B, then D
-```
+Detach without stopping the server: press `Ctrl+B`, then `D`.
 
 Stop the stack:
 
@@ -252,124 +248,61 @@ Stop the stack:
 docker compose down
 ```
 
-The Docker container runs the command from `.env`:
+Useful Docker `.env` values are already listed near the top of `.env.example`; uncomment the ones you need:
 
 ```env
+SERVER_WORKING_DIR=.
+MINECRAFT_PORT=25565
+MINECRAFT_CONTAINER_PORT=25565
+MC_HEALTHCHECK_ENABLED=true
+MC_HEALTHCHECK_PORT=25565
 START_COMMAND=./start.sh
+DOCKER_BASE_IMAGE=ghcr.io/graalvm/jdk-community:25-ol9
 ```
+
+Use `DOCKER_BASE_IMAGE` when you need a different Java version, but keep it compatible with the package install step in `Dockerfile`.
 
 ## Backups
 
-Configure backups in `.env`:
+Configure backup paths in `.env`:
 
 ```env
-MC_BACKUP_SERVER_DIR=.
+SERVER_WORKING_DIR=.
 MC_BACKUP_DIR=./backups
-MC_BACKUP_NAME=minecraft-server
-MC_BACKUP_WORLDS=world
-MC_BACKUP_FORMAT=auto
+MC_BACKUP_WORLDS=world,world_nether,world_the_end
 ```
 
-Create a full backup:
+Run:
 
 ```bash
 ./mc-backup.sh full
-```
-
-Create a world-only backup:
-
-```bash
 ./mc-backup.sh worlds
-```
-
-Restart the server with warnings but no backup:
-
-```bash
+./mc-backup.sh worlds --no-stop
 ./mc-backup.sh restart
-```
-
-Restore a backup:
-
-```bash
 ./mc-backup.sh restore ./backups/example.zip
 ```
 
-Backup notifications are best-effort. If the server is not running or the console cannot be reached, the backup still runs.
+Hot world backups use `save-all`, `save-off`, then `save-on`. If archiving fails, the script turns saving back on before returning.
 
-## Dynmap helpers
+## Dynmap
 
-Configure Dynmap upload:
+Configure upload and SQL reset in `.env`:
 
 ```env
 DYNMAP_WEB_SOURCE=dynmap/web
 DYNMAP_REMOTE_HOST=user@example.com
 DYNMAP_REMOTE_WEB_LOCATION=/home/user/.nginx/html/dynmap
+DYNMAP_DB_HOST=example.com
+DYNMAP_DB_USER=dynmap
+DYNMAP_DB_NAME=dynmap
 ```
 
-Upload Dynmap web files:
+Run:
 
 ```bash
 ./mc-dynmap.sh upload-web
-```
-
-Configure SQL reset:
-
-```env
-DYNMAP_DB_HOST=example.com
-DYNMAP_DB_PORT=3306
-DYNMAP_DB_USER=dynmap
-DYNMAP_DB_NAME=dynmap
-DYNMAP_DB_PASSWORD=
-```
-
-Reset Dynmap SQL tables:
-
-```bash
 ./mc-dynmap.sh reset-sql
-```
-
-Run both SQL reset and web upload:
-
-```bash
 ./mc-dynmap.sh sync
 ```
 
-## Typical update workflow
-
-Stop the running server if needed:
-
-```text
-!stop
-```
-
-Update all tracked jars, mods, and plugins:
-
-```bash
-./mc-updater.sh update
-```
-
-Start again:
-
-```text
-!start
-```
-
-Or restart the whole launcher:
-
-```text
-!exit
-./start.sh
-```
-
-## Common launcher commands
-
-```text
-!help                         Show launcher help
-!start                        Start the main Minecraft server jar
-!stop                         Stop the main Minecraft server jar
-!restart                      Restart the main Minecraft server jar
-!status                       Show server and service status
-!services                     List configured services
-!send <command>               Send a command to Minecraft
-!exit                         Stop everything and exit
-```
+`sync` runs `reset-sql` first, then uploads the web files.
